@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>ジングルボード</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --card:#ffffff; --text:#1a1d21; --sub:#6b7280;
+    --accent:#1596C7; --accent-dark:#0f7699; --border:#e2e6ea;
+    --danger:#e0554f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#14171a; --card:#1f2428; --text:#f0f2f4; --sub:#9aa3ab;
+      --accent:#3db8e8; --accent-dark:#1596C7; --border:#31373d;
+      --danger:#ff756e;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14171a; --card:#1f2428; --text:#f0f2f4; --sub:#9aa3ab;
+    --accent:#3db8e8; --accent-dark:#1596C7; --border:#31373d;
+    --danger:#ff756e;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",system-ui,sans-serif;
+    padding:20px; min-height:100vh;
+  }
+  h1{font-size:1.3rem; margin:0 0 4px;}
+  p.desc{color:var(--sub); margin:0 0 20px; font-size:0.85rem;}
+  .grid{
+    display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+    gap:14px; margin-bottom:24px;
+  }
+  .pad{
+    background:var(--card); border:1px solid var(--border); border-radius:14px;
+    padding:16px 12px; display:flex; flex-direction:column; align-items:center;
+    gap:8px; cursor:pointer; transition:transform .08s, box-shadow .15s;
+    user-select:none; position:relative; min-height:110px; justify-content:center;
+  }
+  .pad:active{transform:scale(0.96);}
+  .pad.playing{box-shadow:0 0 0 3px var(--accent); }
+  .pad .icon{font-size:1.8rem;}
+  .pad .label{font-weight:600; font-size:0.95rem; text-align:center; word-break:break-word;}
+  .pad .empty-hint{font-size:0.7rem; color:var(--sub);}
+  .pad .assign-btn{
+    font-size:0.7rem; color:var(--accent); background:none; border:none;
+    cursor:pointer; padding:2px 4px;
+  }
+  .pad input[type=file]{display:none;}
+  .toolbar{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px;}
+  button.main-btn{
+    background:var(--accent); color:#fff; border:none; border-radius:10px;
+    padding:10px 16px; font-size:0.85rem; cursor:pointer; font-weight:600;
+  }
+  button.main-btn.stop{background:var(--danger);}
+  button.main-btn:hover{background:var(--accent-dark);}
+  .overflow-wrap{overflow-x:auto;}
+  footer{color:var(--sub); font-size:0.75rem; margin-top:10px; line-height:1.6;}
+</style>
+</head>
+<body>
+
+<h1>🎵 ジングルボード</h1>
+<p class="desc">各ボタンに好きな音声ファイル（mp3 / wav 等）を割り当てて、タップで再生できます。</p>
+
+<div class="toolbar">
+  <button class="main-btn" id="addPadBtn">＋ パッドを追加</button>
+  <button class="main-btn stop" id="stopAllBtn">■ 全停止</button>
+</div>
+
+<div class="overflow-wrap">
+  <div class="grid" id="grid"></div>
+</div>
+
+<footer>
+  著作権保護された楽曲データそのものはこのアプリに含まれていません。お手持ちの音源ファイルをボタンに割り当ててご利用ください。<br>
+  割り当てた音源はこのブラウザ内にのみ保存され、他の人とは共有されません。
+</footer>
+
+<script>
+const grid = document.getElementById('grid');
+const STORAGE_KEY = 'jingleboard_pads_v1';
+
+let pads = [];
+try {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) pads = JSON.parse(saved);
+} catch(e) { pads = []; }
+
+if (pads.length === 0) {
+  pads = [
+    { id: cryptoId(), label: 'マンボNo.5', audio: null },
+    { id: cryptoId(), label: '正解音', audio: null },
+    { id: cryptoId(), label: 'ブブー', audio: null },
+    { id: cryptoId(), label: 'ドラムロール', audio: null },
+  ];
+}
+
+function cryptoId(){
+  return 'p_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36);
+}
+
+function savePads(){
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(pads));
+  } catch(e) { /* ストレージが使えない場合は何もしない */ }
+}
+
+let currentAudio = null;
+let currentPlayingPadId = null;
+
+function stopAll(){
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+  }
+  currentPlayingPadId = null;
+  render();
+}
+
+function playPad(pad){
+  if (!pad.audio) return;
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+  }
+  const audio = new Audio(pad.audio);
+  currentAudio = audio;
+  currentPlayingPadId = pad.id;
+  audio.play().catch(()=>{});
+  audio.onended = () => {
+    if (currentPlayingPadId === pad.id) {
+      currentPlayingPadId = null;
+      render();
+    }
+  };
+  render();
+}
+
+function handleFile(pad, file){
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    pad.audio = e.target.result;
+    if (!pad.labelSetByUser) {
+      pad.label = file.name.replace(/\.[^/.]+$/, '');
+    }
+    savePads();
+    render();
+  };
+  reader.readAsDataURL(file);
+}
+
+function renamePad(pad){
+  const name = prompt('ボタン名を入力してください', pad.label || '');
+  if (name !== null && name.trim() !== '') {
+    pad.label = name.trim();
+    pad.labelSetByUser = true;
+    savePads();
+    render();
+  }
+}
+
+function deletePad(pad){
+  if (!confirm(`「${pad.label}」を削除しますか？`)) return;
+  pads = pads.filter(p => p.id !== pad.id);
+  savePads();
+  render();
+}
+
+function render(){
+  grid.innerHTML = '';
+  pads.forEach(pad => {
+    const el = document.createElement('div');
+    el.className = 'pad' + (currentPlayingPadId === pad.id ? ' playing' : '');
+
+    const icon = document.createElement('div');
+    icon.className = 'icon';
+    icon.textContent = pad.audio ? (currentPlayingPadId === pad.id ? '⏸️' : '▶️') : '📥';
+    el.appendChild(icon);
+
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.textContent = pad.label || '（無題）';
+    el.appendChild(label);
+
+    if (!pad.audio) {
+      const hint = document.createElement('div');
+      hint.className = 'empty-hint';
+      hint.textContent = 'タップして音源を選択';
+      el.appendChild(hint);
+    }
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'audio/*,.mp3,.wav,.m4a,.aac,.ogg';
+    fileInput.onchange = (e) => {
+      if (e.target.files[0]) handleFile(pad, e.target.files[0]);
+    };
+    el.appendChild(fileInput);
+
+    el.onclick = (e) => {
+      if (pad.audio) {
+        if (currentPlayingPadId === pad.id) {
+          stopAll();
+        } else {
+          playPad(pad);
+        }
+      } else {
+        fileInput.click();
+      }
+    };
+
+    // 長押し的な右クリック/名前変更・削除メニュー代わりのボタン群
+    const controls = document.createElement('div');
+    controls.style.display = 'flex';
+    controls.style.gap = '6px';
+
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'assign-btn';
+    renameBtn.textContent = '名前変更';
+    renameBtn.onclick = (e) => { e.stopPropagation(); renamePad(pad); };
+    controls.appendChild(renameBtn);
+
+    const changeBtn = document.createElement('button');
+    changeBtn.className = 'assign-btn';
+    changeBtn.textContent = pad.audio ? '音源変更' : '音源選択';
+    changeBtn.onclick = (e) => { e.stopPropagation(); fileInput.click(); };
+    controls.appendChild(changeBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'assign-btn';
+    delBtn.textContent = '削除';
+    delBtn.style.color = 'var(--danger)';
+    delBtn.onclick = (e) => { e.stopPropagation(); deletePad(pad); };
+    controls.appendChild(delBtn);
+
+    el.appendChild(controls);
+    grid.appendChild(el);
+  });
+}
+
+document.getElementById('addPadBtn').onclick = () => {
+  pads.push({ id: cryptoId(), label: '新しいジングル', audio: null });
+  savePads();
+  render();
+};
+
+document.getElementById('stopAllBtn').onclick = stopAll;
+
+render();
+</script>
+
+</body>
+</html>
